@@ -1,39 +1,25 @@
 pipeline {
     agent { label 'jenkins-ubuntu-slave' }
-    parameters {
-        choice(name: 'ENV', choices: ['dev', 'test', 'prod',"release"])
-    } 
     stages {
-        stage('build') {
+        stage('sonarqube'){
             steps {
                 script {
-                   if (params.ENV == "release") {
-                       withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
-                           sh """
-                                docker login -u $USERNAME -p $PASSWORD
-                                docker build -t kareemelkasaby/itimansbakehouse:${BUILD_NUMBER} .
-                                docker push kareemelkasaby/itimansbakehouse:${BUILD_NUMBER}
-                                echo ${BUILD_NUMBER} > ../bakehouse-build-number.txt
-                           """
-                       }
+                    def pipelineConfig=[
+                        sonarQubeServer: 'sonarqube',
+                    ]
+                    def repositoryUrl = scm.userRemoteConfigs[0].getUrl()
+                    def GIT_REPO_NAME = scm.userRemoteConfigs[0].getUrl().tokenize('/').last().split("\\.")[0]
+                    def scannerHome = tool 'my_sonar_scanner'
+                    def SONAR_BRANCH_NAME = env.BRANCH_NAME
+                    withSonarQubeEnv(pipelineConfig.sonarQubeServer) {
+                        sh "sed -i s#{{repo_name}}#${GIT_REPO_NAME}# sonar-project.properties"
+                        sh "sed -i s#{{branch_name}}#${SONAR_BRANCH_NAME}# sonar-project.properties"
+                        sh "${scannerHome}/bin/sonar-scanner -Dsonar.projectVersion=${SONAR_BRANCH_NAME} -Dsonar.buildString=Jenkins-${SONAR_BRANCH_NAME}-BLD${env.BUILD_NUMBER}"
                     }
-                }
-            }
-        }
-        stage('deploy') {
-            steps {
-                script {
-                    if (params.ENV == "dev" || params.ENV == "test" || params.ENV == "prod") {
-                            withCredentials([file(credentialsId: 'kubernetes_kubeconfig', variable: 'KUBECONFIG')]) {
-                          sh """
-                              export BUILD_NUMBER=\$(cat ../bakehouse-build-number.txt)
-                              mv Deployment/deploy.yaml Deployment/deploy.yaml.tmp
-                              cat Deployment/deploy.yaml.tmp | envsubst > Deployment/deploy.yaml
-                              rm -f Deployment/deploy.yaml.tmp
-                              kubectl apply -f Deployment --kubeconfig=${KUBECONFIG}
-                            """
-                        }
-                    }
+                    //TODO: enable step (requires webhook on Sonarqube server)
+                    //timeout(time: 10, unit: 'MINUTES') {
+                        // waitForQualityGate abortPipeline: true
+                    //} 
                 }
             }
         }
